@@ -50,8 +50,8 @@ const LS_TTS_SERVER = "wolf_tts_server_v1";  // 局域网克隆语音合成服�
 const RESUME_WINDOW_MS = 30 * 60 * 1000;
 const HISTORY_KEEP = 10;
 
-// 同源托管的 Pyodide 目录（dist 构建时整体替换 ../ → ./）
-const PYODIDE_BASE = "../pyodide/";
+// 同源托管的 Pyodide 目录（GitHub Pages 部署在 /-/ 子路径下，必须用相对当前页面的 ./）
+const PYODIDE_BASE = "./pyodide/";
 // 运行时生成 0.1 秒静音 WAV（iOS 音频解锁用，无需外部文件）
 function silentWavDataUri() {
   const rate = 8000, n = Math.floor(rate * 0.1);
@@ -160,7 +160,7 @@ async function initPyodide() {
   console.log("[py] pyodide loaded:", App.pyodide.runPython("import sys; sys.version"));
 
   setLoadingText("正在加载游戏逻辑 ...");
-  const resp = await fetch("../game_logic.py");
+  const resp = await fetch("./game_logic.py");
   if (!resp.ok) throw new Error("fetch game_logic.py 失败：" + resp.status);
   const src = await resp.text();
   App.pyodide.FS.writeFile("game_logic.py", src);
@@ -193,7 +193,7 @@ function playVoice(key, delay = 0) {
   if (!App.audioVoice) App.audioVoice = document.getElementById("voice");
   const run = () => {
     const a = App.audioVoice;
-    a.src = `../voice/${key}.mp3`;
+    a.src = `./voice/${key}.mp3`;
     // iOS 上换 src 后必须 load()，否则 play() 可能仍播旧源或被拒
     try { a.load(); } catch (e) {}
     const p = a.play();
@@ -230,7 +230,7 @@ function ttsSupported() {
 }
 
 // 克隆音频拼接播放（安卓浏览器专用）
-const TTS_CLIP_DIR = "./voice/tts/";  // dist 构建时替换为 ./
+const TTS_CLIP_DIR = "./voice/tts/";
 let _ttsClipQueue = [];
 let _ttsClipIdx = 0;
 const _ttsClipCache = {};   // 预加载的 Audio 对象，避免顺序加载延迟

@@ -47,6 +47,7 @@ const LS_SAVE = "wolf_save_v1";
 const LS_HISTORY = "wolf_history_v1";
 const LS_TTS = "wolf_tts_v1";
 const LS_TTS_SERVER = "wolf_tts_server_v1";  // 局域网克隆语音合成服务器
+const LS_TTS_VOICE = "wolf_tts_voice_v1";    // 手动选择的系统音色 voiceURI
 const RESUME_WINDOW_MS = 30 * 60 * 1000;
 const HISTORY_KEEP = 10;
 
@@ -107,6 +108,7 @@ const App = {
   ttsEnabled: false,
   ttsUnlocked: false,
   ttsServer: "",  // 局域网 GPT-SoVITS 合成服务器(念玩家名字)
+  ttsVoiceURI: "",  // 手动选择的系统音色(空=自动选女声)
 };
 
 // ========== DOM 引用 ==========
@@ -410,6 +412,11 @@ function pickZhVoice() {
   if (!App.zhVoices || !App.zhVoices.length) refreshVoices();
   const list = App.zhVoices || [];
   if (!list.length) return null;
+  // 0) 手动选择的音色最优先（首页"语音"下拉，存 localStorage）
+  if (App.ttsVoiceURI) {
+    const picked = list.find(v => v.voiceURI === App.ttsVoiceURI);
+    if (picked) return picked;
+  }
   // 女声白名单：大陆 Ting-Ting/Tian-Tian，台湾 Mei-Jia，香港 Sin-ji
   const female = /ting[-_ ]?ting|tian[-_ ]?tian|mei[-_ ]?jia|sin[-_ ]?ji|female|女声?$/i;
   // 男声黑名单：旧男声 Li-mu + iOS 新增常见男声拼音名 + Siri(名字分不出男女，降级处理)
@@ -445,9 +452,11 @@ function speakText(text, _retry) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "zh-CN";
     u.rate = 1.0;
-    // 选中的不是已知女声(如只剩 Siri/男声)时抬高音调减轻男声感
+    // 选中的不是已知女声(如只剩 Siri/男声)时抬高音调减轻男声感；
+    // 用户手动选的音色按原声播(尊重选择，不再强改音调)
+    const manual = !!(zh && App.ttsVoiceURI && zh.voiceURI === App.ttsVoiceURI);
     const isFemale = zh && /ting[-_ ]?ting|tian[-_ ]?tian|mei[-_ ]?jia|sin[-_ ]?ji|female|女/i.test(zh.name);
-    u.pitch = isFemale ? 1.0 : 1.15;
+    u.pitch = (manual || isFemale) ? 1.0 : 1.15;
     u.volume = 1.0;
     if (zh) u.voice = zh;
     // 不在 speak 前 cancel：iOS 上 cancel+speak 竞态会吞掉整句；
@@ -456,10 +465,15 @@ function speakText(text, _retry) {
     synth.speak(u);
   } catch (e) { console.warn("TTS failed:", e); }
 }
-// Safari 语音列表异步加载，加载后立即缓存
+// Safari 语音列表异步加载，加载后立即缓存；若正停在首页则重渲染出音色下拉
 if (ttsSupported()) {
   refreshVoices();
-  window.speechSynthesis.onvoiceschanged = refreshVoices;
+  window.speechSynthesis.onvoiceschanged = () => {
+    refreshVoices();
+    if (App.screen === "setup" && !App.historyView) {
+      try { renderSetup(); } catch (e) {}
+    }
+  };
 }
 
 // ========== 工具：HTML 转义 + 玩家信息 ==========
@@ -691,6 +705,26 @@ function renderSetup() {
         电脑运行 GPT-SoVITS API(端口9880)且与手机同一WiFi，死亡播报才会念出玩家名字；
         留空或被浏览器拦截时自动改用内置语音(不带名字)。</div>
     ` : ""}
+
+    ${!useClipsAudio() && ttsSupported() ? (() => {
+      const vs = App.zhVoices || [];
+      const opts = ['<option value="">自动（优先女声）</option>']
+        .concat(vs.map(v => `<option value="${esc(v.voiceURI)}" ${App.ttsVoiceURI===v.voiceURI?'selected':''}>${esc(v.name)}（${v.lang}）</option>`))
+        .join("");
+      return `
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:stretch">
+        <select data-action="tts-voice"
+          style="flex:1;background:#1C202B;border:1px solid #2A2F3D;border-radius:8px;
+                 color:#EDF0F6;padding:10px;font-size:14px">
+          ${vs.length ? opts : '<option value="">语音列表加载中…</option>'}
+        </select>
+        <button class="btn line sm" data-action="tts-voice-test"
+          style="padding:0 14px;white-space:nowrap">试听</button>
+      </div>
+      <div class="label" style="opacity:.65;font-size:12px;margin-top:4px">
+        觉得是男声就选「婷婷 / Tian-Tian / Mei-Jia」等女声再点试听；
+        下拉里全是男声 = 手机没装中文女声包，去 设置→辅助功能→朗读内容→声音→中文 下载女声后回来刷新。</div>
+    `; })() : ""}
 
     ${resume ? `
       <button class="btn lg block" data-action="resume-game"
@@ -971,6 +1005,10 @@ $app.addEventListener("click", (ev) => {
     case "role-inc":     setupRoleInc(t.dataset.role); break;
     case "role-dec":     setupRoleDec(t.dataset.role); break;
     case "toggle-mod":   App.setup.modMode = t.checked; break;
+    case "tts-voice-test":
+      App.ttsUnlocked = true;
+      speakText("大家好，这是朗读试听，天黑请闭眼，天亮请睁眼。");
+      break;
     case "toggle-tts":
       App.ttsEnabled = t.checked;
       try { localStorage.setItem(LS_TTS, App.ttsEnabled ? "1" : "0"); } catch (e) {}
@@ -1030,6 +1068,14 @@ $app.addEventListener("input", (ev) => {
     App.ttsServer = t.value.trim();
     try { localStorage.setItem(LS_TTS_SERVER, App.ttsServer); } catch (e) {}
   }
+});
+
+// 语音音色下拉（select 的选择走 change 事件）
+$app.addEventListener("change", (ev) => {
+  const t = ev.target.closest("[data-action]");
+  if (!t || t.dataset.action !== "tts-voice") return;
+  App.ttsVoiceURI = t.value;
+  try { localStorage.setItem(LS_TTS_VOICE, App.ttsVoiceURI); } catch (e) {}
 });
 
 // 退出按钮（双击确认）
@@ -1860,9 +1906,10 @@ function unlockAudio() {
 
 // ========== 启动 ==========
 (function boot() {
-  // 读取本机设置：天亮死亡系统语音朗读开关 + 克隆语音服务器地址
+  // 读取本机设置：天亮死亡系统语音朗读开关 + 克隆语音服务器地址 + 手动音色
   try { App.ttsEnabled = localStorage.getItem(LS_TTS) === "1"; } catch (e) {}
   try { App.ttsServer = localStorage.getItem(LS_TTS_SERVER) || ""; } catch (e) {}
+  try { App.ttsVoiceURI = localStorage.getItem(LS_TTS_VOICE) || ""; } catch (e) {}
   // SW 尽早注册，好在加载 Pyodide 大文件时就开始建立缓存
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(e => console.warn("SW reg failed:", e));

@@ -40,17 +40,18 @@ const ROLE_LIMITS = {
   werewolf:[1,8], villager:[0,15], seer:[0,1], witch:[0,1], guard:[0,1], hunter:[0,1], halfblood:[0,1],
 };
 const ROLE_ORDER = ["werewolf","villager","seer","witch","guard","hunter","halfblood"];
-const APP_VERSION = "V2.5";
+const APP_VERSION = "V2.6";
 
 // 本机存档/历史（localStorage）：30 分钟内可继续对局，历史保留最近 10 局
 const LS_SAVE = "wolf_save_v1";
 const LS_HISTORY = "wolf_history_v1";
 const LS_TTS = "wolf_tts_v1";
+const LS_TTS_SERVER = "wolf_tts_server_v1";  // 局域网克隆语音合成服务器
 const RESUME_WINDOW_MS = 30 * 60 * 1000;
 const HISTORY_KEEP = 10;
 
-// 同源托管的 Pyodide 目录（dist 构建时整体替换 ./ → ./）
-const PYODIDE_BASE = "./pyodide/";
+// 同源托管的 Pyodide 目录（dist 构建时整体替换 ../ → ./）
+const PYODIDE_BASE = "../pyodide/";
 // 运行时生成 0.1 秒静音 WAV（iOS 音频解锁用，无需外部文件）
 function silentWavDataUri() {
   const rate = 8000, n = Math.floor(rate * 0.1);
@@ -105,6 +106,7 @@ const App = {
   // 天亮死亡系统语音朗读（浏览器 speechSynthesis）
   ttsEnabled: false,
   ttsUnlocked: false,
+  ttsServer: "",  // 局域网 GPT-SoVITS 合成服务器(念玩家名字)
 };
 
 // ========== DOM 引用 ==========
@@ -158,7 +160,7 @@ async function initPyodide() {
   console.log("[py] pyodide loaded:", App.pyodide.runPython("import sys; sys.version"));
 
   setLoadingText("正在加载游戏逻辑 ...");
-  const resp = await fetch("./game_logic.py");
+  const resp = await fetch("../game_logic.py");
   if (!resp.ok) throw new Error("fetch game_logic.py 失败：" + resp.status);
   const src = await resp.text();
   App.pyodide.FS.writeFile("game_logic.py", src);
@@ -191,7 +193,7 @@ function playVoice(key, delay = 0) {
   if (!App.audioVoice) App.audioVoice = document.getElementById("voice");
   const run = () => {
     const a = App.audioVoice;
-    a.src = `./voice/${key}.mp3`;
+    a.src = `../voice/${key}.mp3`;
     // iOS 上换 src 后必须 load()，否则 play() 可能仍播旧源或被拒
     try { a.load(); } catch (e) {}
     const p = a.play();
@@ -265,12 +267,15 @@ const CAUSE_CLIP_PREFIX = { wolf: "wolf", poison: "poison", shoot: "shoot" };
 function announceDeathsByClips(deaths) {
   _ttsClipQueue = [];
   if (!deaths || !deaths.length) {
-    _ttsClipQueue.push("tts_safe_night");
+    _ttsClipQueue.push("clip:tts_safe_night");
   } else {
-    _ttsClipQueue.push("tts_night");
+    _ttsClipQueue.push("clip:tts_night");
     for (const [seat, cause] of deaths) {
       const prefix = CAUSE_CLIP_PREFIX[cause] || "wolf";
-      _ttsClipQueue.push("tts_" + prefix + "_" + seat);
+      const key = namedClipKey(prefix, seat);
+      // V2.6：优先播含名字的整句(实时合成)，没有则回退内置无名字片段
+      _ttsClipQueue.push(TTS_NAMED.map[key]
+        ? "dyn:" + key : "clip:tts_" + prefix + "_" + seat);
     }
   }
   _ttsClipIdx = 0;
@@ -279,8 +284,11 @@ function announceDeathsByClips(deaths) {
 
 function _playNextClip() {
   if (_ttsClipIdx >= _ttsClipQueue.length) return;
-  const name = _ttsClipQueue[_ttsClipIdx];
-  const a = _getClipAudio(name);
+  const item = _ttsClipQueue[_ttsClipIdx];
+  const colon = item.indexOf(":");
+  const kind = item.slice(0, colon);
+  const name = item.slice(colon + 1);
+  const a = kind === "dyn" ? _getDynAudio(name) : _getClipAudio(name);
   let done = false;
 
   const goNext = (gap) => {
@@ -302,6 +310,91 @@ function _playNextClip() {
     a.currentTime = 0;
     a.play().catch(() => goNext(60));
   } catch (e) { goNext(60); }
+}
+
+// ========== V2.6：名字整句实时合成(局域网 GPT-SoVITS，仅安卓浏览器) ==========
+const CAUSE_SENTENCE = {
+  wolf: "遭到狼人强奸",
+  poison: "遭到女巫毒杀",
+  shoot: "被猎人射杀",
+};
+const TTS_NAMED = { map: {}, running: false };
+
+function namedClipKey(cause, seat) { return cause + "_" + seat; }
+
+function _getDynAudio(key) {
+  let a = _ttsClipCache["dyn:" + key];
+  if (!a) {
+    a = new Audio(TTS_NAMED.map[key]);
+    a.preload = "auto";
+    _ttsClipCache["dyn:" + key] = a;
+  }
+  return a;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// 合成结果哑火校验：解码后测音量，异常时放行交给播放兜底
+async function _namedClipAudible(buf, ctxBox) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return true;
+    if (!ctxBox.ctx) ctxBox.ctx = new Ctx();
+    const audio = await ctxBox.ctx.decodeAudioData(buf.slice(0));
+    const ch = audio.getChannelData(0);
+    let sum = 0, n = 0;
+    for (let i = 0; i < ch.length; i += 8) { sum += ch[i] * ch[i]; n++; }
+    const rms = Math.sqrt(sum / Math.max(1, n));
+    return rms > 0.01 && audio.duration > 1.0;
+  } catch (e) {
+    return true;
+  }
+}
+
+async function _synthNamedClip(server, text, key, ctxBox) {
+  for (const seed of [101, 202, 303]) {
+    const qs = new URLSearchParams({
+      text, text_lang: "zh", media_type: "wav",
+      text_split_method: "cut0", seed: String(seed),
+    }).toString();
+    try {
+      const r = await fetch(server + "/tts?" + qs, { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      const buf = await r.arrayBuffer();
+      if (buf.byteLength < 5000) throw new Error("tiny");
+      if (await _namedClipAudible(buf, ctxBox)) {
+        TTS_NAMED.map[key] = URL.createObjectURL(
+          new Blob([buf], { type: "audio/wav" }));
+        return true;
+      }
+    } catch (e) { /* mixed content 拦截/超时/哑火 → 换 seed 重试 */ }
+    await sleep(400);
+  }
+  return false;
+}
+
+async function ensureNamedClips() {
+  // 安卓浏览器 + 朗读开 + 配了服务器才合成；页面刷新后重新合成
+  if (!useClipsAudio() || !App.ttsEnabled || TTS_NAMED.running) return;
+  const server = (App.ttsServer || "").replace(/\/+$/, "");
+  if (!server || !/^https?:\/\//i.test(server)) return;
+  const players = getPlayers();
+  if (!players || !players.length) return;
+  TTS_NAMED.running = true;
+  const ctxBox = { ctx: null };
+  try {
+    for (const p of players) {
+      for (const cause of Object.keys(CAUSE_SENTENCE)) {
+        const key = namedClipKey(cause, p.seat);
+        if (TTS_NAMED.map[key]) continue;
+        const text = p.seat + "号" + p.name + "，" + CAUSE_SENTENCE[cause];
+        await _synthNamedClip(server, text, key, ctxBox);
+        await sleep(1000);  // 给 API 留喘息
+      }
+    }
+  } finally {
+    TTS_NAMED.running = false;
+  }
 }
 // 中文音色缓存（Safari 的 getVoices 初始为空，voiceschanged 后才有）
 function refreshVoices() {
@@ -580,6 +673,16 @@ function renderSetup() {
       <span class="label">天亮死亡朗读（${useClipsAudio() ? "克隆语音" : "系统语音"}念出号码/昵称）${ttsSupported() ? "" : " · 当前浏览器不支持"}</span>
     </label>
 
+    ${useClipsAudio() && ttsSupported() ? `
+      <input type="text" data-action="tts-server" value="${esc(App.ttsServer||"")}"
+        maxlength="60" placeholder="克隆服务器 http://电脑IP:9880(念名字)"
+        style="width:100%;margin-top:8px;background:#1C202B;border:1px solid #2A2F3D;
+               border-radius:8px;color:#EDF0F6;padding:10px;font-size:14px">
+      <div class="label" style="opacity:.65;font-size:12px;margin-top:4px">
+        电脑运行 GPT-SoVITS API(端口9880)且与手机同一WiFi，死亡播报才会念出玩家名字；
+        留空或被浏览器拦截时自动改用内置语音(不带名字)。</div>
+    ` : ""}
+
     ${resume ? `
       <button class="btn lg block" data-action="resume-game"
         style="margin-top:16px;background:#3FA68E;color:#12141C">
@@ -729,6 +832,11 @@ print("[py] setup_game done, players:", len(state.players))
   App.state = App.pyodide.globals.get("state");
   App.mod_mode = s.modMode;
   App.deal = { idx: 0, revealed: false };
+  // 开局预加载内置片段 + 后台合成含名字整句(配置了服务器才有)
+  if (App.ttsEnabled) {
+    preloadTTSClips();
+    ensureNamedClips();
+  }
   // 进入发牌屏（主持人模式时也先进发牌，主持人确认在 deal 完成后切到 mod）
   setScreen("deal");
 }
@@ -909,6 +1017,9 @@ $app.addEventListener("input", (ev) => {
   if (t.dataset.action === "set-name") {
     const i = parseInt(t.dataset.i, 10);
     App.setup.names[i] = t.value;
+  } else if (t.dataset.action === "tts-server") {
+    App.ttsServer = t.value.trim();
+    try { localStorage.setItem(LS_TTS_SERVER, App.ttsServer); } catch (e) {}
   }
 });
 
@@ -1740,8 +1851,9 @@ function unlockAudio() {
 
 // ========== 启动 ==========
 (function boot() {
-  // 读取本机设置：天亮死亡系统语音朗读开关
+  // 读取本机设置：天亮死亡系统语音朗读开关 + 克隆语音服务器地址
   try { App.ttsEnabled = localStorage.getItem(LS_TTS) === "1"; } catch (e) {}
+  try { App.ttsServer = localStorage.getItem(LS_TTS_SERVER) || ""; } catch (e) {}
   // SW 尽早注册，好在加载 Pyodide 大文件时就开始建立缓存
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(e => console.warn("SW reg failed:", e));

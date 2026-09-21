@@ -1,0 +1,417 @@
+/* 狼人杀小助手 - Web UI 暗色主题 */
+:root {
+  --bg: #12141C;
+  --card: #1C202B;
+  --line: #2A2F3D;
+  --btn: #2B3243;
+  --btn-on: #394257;
+  --amber: #E8A33D;
+  --wolf-red: #D94B4B;
+  --good-green: #3FA68E;
+  --god-gold: #D8B55A;
+  --half-purple: #9B6BD4;
+  --text: #EDF0F6;
+  --muted: #8A93A6;
+  --danger: #5A2730;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 桌面浏览器居中显示 430x860 移动端尺寸 */
+body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  overflow: auto;
+}
+
+#frame {
+  width: 430px;
+  height: 860px;
+  max-height: 100vh;
+  background: var(--bg);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 460px) {
+  #frame { width: 100vw; height: 100vh; max-height: 100vh; }
+}
+
+#app {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px 80px 14px;
+  position: relative;
+}
+
+/* ---------- 通用按钮 ---------- */
+.btn {
+  display: inline-block;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: center;
+  width: 100%;
+  transition: background .12s;
+}
+.btn:hover { background: var(--btn-on); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+.btn.amber  { background: var(--amber);  color: var(--bg); font-weight: 600; }
+.btn.wolf   { background: var(--wolf-red); color: #fff; font-weight: 600; }
+.btn.good   { background: var(--good-green); color: var(--bg); font-weight: 600; }
+.btn.gold   { background: var(--god-gold); color: var(--bg); font-weight: 600; }
+.btn.line   { background: var(--line); color: var(--muted); }
+.btn.danger { background: var(--danger); color: var(--text); }
+.btn.lg     { padding: 16px; font-size: 17px; }
+.btn.sm     { padding: 8px 12px; font-size: 13px; }
+.btn.block  { display:block; width:100%; }
+.btn + .btn { margin-top: 8px; }
+
+/* ---------- 通用卡片/文字 ---------- */
+.card {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.label        { color: var(--text); line-height: 1.5; }
+.label.muted  { color: var(--muted); font-size: 13px; }
+.label.amber  { color: var(--amber); }
+.label.wolf   { color: var(--wolf-red); }
+.label.good   { color: var(--good-green); }
+.label.gold   { color: var(--god-gold); }
+.label.purple { color: var(--half-purple); }
+.label.big    { font-size: 22px; font-weight: 600; }
+.label.huge   { font-size: 40px; font-weight: 700; letter-spacing: 4px; }
+.label.center { text-align: center; }
+.label.bold   { font-weight: 600; }
+.label.spacer-top { margin-top: 12px; display:block; }
+.label + .label { margin-top: 6px; }
+
+.page-head {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.page-head .day { color: var(--amber); font-weight: 600; font-size: 15px; }
+
+hr.sep {
+  border: 0; border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
+/* ---------- target_grid 玩家选择 ---------- */
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.target-cell {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 4px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: background .12s, border-color .12s;
+}
+.target-cell:hover  { background: var(--btn-on); border-color: var(--amber); }
+.target-cell .seat  { font-size: 16px; font-weight: 600; color: var(--amber); display:block; }
+.target-cell .name  { display:block; margin-top: 4px; color: var(--muted); }
+.target-cell:disabled { color: var(--muted); cursor: not-allowed; }
+.target-cell:disabled .seat { color: var(--muted); }
+.target-cell.wolf-mate { border-color: var(--wolf-red); }
+
+/* ---------- 设置屏：身份计数器 ---------- */
+.role-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; margin-bottom: 6px;
+  background: var(--card); border-radius: 8px;
+}
+.role-row .name { display: flex; align-items: center; gap: 8px; }
+.role-row .badge {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+}
+.role-row .count { display: flex; align-items: center; gap: 8px; }
+.role-row .count button {
+  width: 32px; height: 32px;
+  background: var(--btn); color: var(--text);
+  border: 0; border-radius: 6px;
+  font-size: 18px; cursor: pointer; font-family: inherit;
+}
+.role-row .count button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+.role-row .count .val {
+  display: inline-block; width: 28px; text-align: center;
+  font-weight: 600; color: var(--amber); font-size: 16px;
+}
+
+.seg {
+  display: flex; gap: 6px; margin: 8px 0 14px;
+}
+.seg button {
+  flex: 1; padding: 10px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px;
+  color: var(--muted); cursor: pointer; font-family: inherit;
+}
+.seg button.active { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 600; }
+
+.name-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px; margin: 8px 0 12px;
+}
+.name-list input {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; color: var(--text);
+  font-size: 14px; font-family: inherit; width: 100%;
+}
+
+.checkbox-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin: 8px 0;
+  background: var(--card); border-radius: 8px;
+  cursor: pointer;
+}
+.checkbox-row input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+
+/* ---------- 死亡卡片 ---------- */
+.death-card {
+  background: var(--card);
+  border-left: 4px solid var(--wolf-red);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+}
+.death-card.poison  { border-left-color: var(--half-purple); }
+.death-card.shoot   { border-left-color: var(--god-gold); }
+.death-card .who    { font-weight: 600; color: var(--text); }
+.death-card .cause  { font-size: 14px; margin-top: 4px; }
+.death-card.poison .cause { color: var(--half-purple); }
+.death-card.shoot  .cause { color: var(--god-gold); }
+.death-card        .cause { color: var(--wolf-red); }
+
+/* ---------- 全局退出 / 主持人按钮 ---------- */
+#quit-btn {
+  position: absolute; top: 8px; right: 10px;
+  padding: 6px 10px;
+  background: var(--danger); color: var(--text);
+  border: 0; border-radius: 6px;
+  font-size: 12px; cursor: pointer; font-family: inherit;
+  z-index: 10;
+  opacity: 0; transition: opacity .2s;
+}
+#quit-btn.show { opacity: 1; }
+#mod-btn {
+  position: absolute; top: 8px; right: 88px;
+  padding: 6px 12px;
+  background: var(--god-gold); color: var(--bg);
+  border: 0; border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+  z-index: 10;
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+#mod-btn.show { opacity: 1; pointer-events: auto; }
+
+/* ---------- 主持人身份浮层 ---------- */
+#mod-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.62);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+#mod-overlay.show { display: flex; }
+.mod-panel {
+  width: 100%; max-width: 400px;
+  max-height: 86vh;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex; flex-direction: column;
+}
+.mod-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 700; color: var(--god-gold); margin-bottom: 6px;
+}
+.mod-head button {
+  background: var(--btn); color: var(--text); border: 0;
+  border-radius: 6px; padding: 6px 14px; cursor: pointer; font-family: inherit;
+}
+.mod-warn { margin-bottom: 10px; }
+.mod-list { overflow-y: auto; }
+.mod-row {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 6px;
+}
+.mod-row.dead { opacity: .5; }
+.mod-seat { font-weight: 700; color: var(--amber); width: 34px; flex: none; }
+.mod-badge {
+  width: 26px; height: 26px; border-radius: 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--bg); font-weight: 700; font-size: 13px;
+}
+.mod-name { flex: 1; }
+.mod-role { font-weight: 600; width: 56px; text-align: right; }
+.mod-status { font-size: 12px; color: var(--muted); width: 34px; text-align: right; }
+
+/* ---------- 两步确认：选中格 + 底部确认条 ---------- */
+.target-cell.selected {
+  background: var(--amber);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 2px rgba(232,163,61,.35);
+}
+.target-cell.selected .seat,
+.target-cell.selected .name { color: var(--bg); }
+.confirm-bar {
+  position: sticky; bottom: 0;
+  background: linear-gradient(transparent, var(--bg) 28%);
+  padding: 16px 0 6px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.confirm-bar .picked {
+  text-align: center; color: var(--amber); font-weight: 600; font-size: 14px;
+}
+
+/* ---------- 通用确认弹窗 ---------- */
+#confirm-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.62);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 60;
+  padding: 20px;
+}
+#confirm-overlay.show { display: flex; }
+.confirm-panel {
+  width: 100%; max-width: 320px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 18px;
+}
+.confirm-text {
+  font-size: 16px;
+  text-align: center;
+  line-height: 1.5;
+  margin-bottom: 18px;
+  color: var(--text);
+}
+.confirm-actions {
+  display: flex; gap: 10px;
+}
+.confirm-actions .btn { flex: 1; height: 48px; font-size: 16px; }
+
+/* ---------- 对局记录（终局界面流水） ---------- */
+.log-line {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: left;
+}
+
+/* ---------- 出局 / 无药 操作提示条 ---------- */
+.inactive-banner {
+  background: var(--danger);
+  border: 1px solid var(--wolf-red);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+/* ---------- 加载屏 ---------- */
+#loading {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--bg); gap: 16px; padding: 24px;
+}
+#loading .spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--line); border-top-color: var(--amber);
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading .text { color: var(--muted); font-size: 14px; text-align: center; line-height: 1.5; }
+
+/* ---------- 终局身份行 ---------- */
+.role-row-final {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; margin-bottom: 4px;
+  background: var(--card); border-radius: 6px;
+}
+.role-row-final.dead { opacity: .55; }
+.role-row-final .left { display: flex; align-items: center; gap: 8px; }
+.role-row-final .status { font-size: 12px; color: var(--muted); }
+
+/* ---------- 发牌屏 ---------- */
+.deal-stage {
+  text-align: center; padding: 20px 14px;
+}
+.deal-stage .role-icon {
+  width: 96px; height: 96px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 44px; font-weight: 700;
+  margin: 24px auto;
+  border: 4px solid currentColor;
+}
+.deal-stage .role-name { font-size: 28px; font-weight: 700; margin: 8px 0; }
+.deal-stage .role-camp { font-size: 14px; color: var(--muted); }
+.deal-stage .role-skill { font-size: 13px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+
+/* ---------- 夜晚屏 ---------- */
+.night-stage {
+  display: flex; flex-direction: column; gap: 12px;
+}
+.center-stack { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; }
+.big-role {
+  font-size: 38px; font-weight: 700; color: var(--amber);
+  text-align: center; padding: 24px 0 8px;
+}
+.witch-info, .hunter-info, .seer-info {
+  text-align: center; padding: 16px 0;
+}
+
+.scroll-area {
+  max-height: 360px; overflow-y: auto;
+  border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px;
+}
+
+/* ---------- 版本号 ---------- */
+.version-tag {
+  text-align: center; color: var(--muted); font-size: 12px;
+  padding: 12px 0 6px; opacity: .7;
+}

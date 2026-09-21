@@ -403,22 +403,29 @@ function refreshVoices() {
   App.zhVoices = voices.filter(v => /^zh|cmn/i.test(v.lang));
 }
 // 选中文女声：iOS 上 zh-CN 同时存在男声 Li-mu 和女声 Ting-Ting/Tian-Tian，
-// 顺序取第一个可能取到男声，必须按女声名字优先
+// 顺序取第一个可能取到男声，必须按女声名字优先。
+// iOS 系统更新后默认引擎可能变成新男声(Siri/新语音包)，
+// 所以女声白名单从宽、男声黑名单从宽，最后 pitch 兜底减轻男声感。
 function pickZhVoice() {
   if (!App.zhVoices || !App.zhVoices.length) refreshVoices();
   const list = App.zhVoices || [];
   if (!list.length) return null;
-  const female = /ting|tian|mei|sinji|female|女/i;
-  const male = /li-?mu|male|男/i;
-  // 1) 普通话女声（Ting-Ting / Tian-Tian）
+  // 女声白名单：大陆 Ting-Ting/Tian-Tian，台湾 Mei-Jia，香港 Sin-ji
+  const female = /ting[-_ ]?ting|tian[-_ ]?tian|mei[-_ ]?jia|sin[-_ ]?ji|female|女声?$/i;
+  // 男声黑名单：旧男声 Li-mu + iOS 新增常见男声拼音名 + Siri(名字分不出男女，降级处理)
+  const male = /li[-_ ]?mu|yun[-_ ]?(yang|yi|hui|kang|xiang|ye)|zhi[-_ ]?wei|jian[-_ ]?wei|hui[-_ ]?hui|siri|male|男/i;
+  // 1) 普通话女声白名单
   const cn = list.filter(v => /zh[-_]?(CN|Hans)/i.test(v.lang));
   let v = cn.find(x => female.test(x.name) && !male.test(x.name));
   if (v) return v;
-  // 2) 任意中文女声（港 Sinji / 台 Meijia 等）
+  // 2) 任意中文女声白名单（港 Sin-ji / 台 Mei-Jia 等）
   v = list.find(x => female.test(x.name) && !male.test(x.name));
   if (v) return v;
-  // 3) 普通话里避开明确男声
+  // 3) 普通话里避开已知男声/Siri
   v = cn.find(x => !male.test(x.name));
+  if (v) return v;
+  // 4) 任意中文里避开已知男声/Siri
+  v = list.find(x => !male.test(x.name));
   if (v) return v;
   return list[0];
 }
@@ -438,7 +445,9 @@ function speakText(text, _retry) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "zh-CN";
     u.rate = 1.0;
-    u.pitch = 1.0;
+    // 选中的不是已知女声(如只剩 Siri/男声)时抬高音调减轻男声感
+    const isFemale = zh && /ting[-_ ]?ting|tian[-_ ]?tian|mei[-_ ]?jia|sin[-_ ]?ji|female|女/i.test(zh.name);
+    u.pitch = isFemale ? 1.0 : 1.15;
     u.volume = 1.0;
     if (zh) u.voice = zh;
     // 不在 speak 前 cancel：iOS 上 cancel+speak 竞态会吞掉整句；

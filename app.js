@@ -40,7 +40,7 @@ const ROLE_LIMITS = {
   werewolf:[1,8], villager:[0,15], seer:[0,1], witch:[0,1], guard:[0,1], hunter:[0,1], halfblood:[0,1],
 };
 const ROLE_ORDER = ["werewolf","villager","seer","witch","guard","hunter","halfblood"];
-const APP_VERSION = "V2.4";
+const APP_VERSION = "V2.5";
 
 // 本机存档/历史（localStorage）：30 分钟内可继续对局，历史保留最近 10 局
 const LS_SAVE = "wolf_save_v1";
@@ -1098,7 +1098,7 @@ function renderWitchHeal(stage) {
   } else {
     const p = getPlayers().find(x=>x.seat===target);
     body = `
-      <div class="label big bold">今晚 ${target}号 ${esc(p.name)} 被狼人袭击</div>
+      <div class="label big bold">今晚 ${target}号 ${esc(p.name)} 被狼人强奸</div>
       ${reason && healAvail ? `<div class="label wolf">${esc(reason)}</div>` : ""}
       <button type="button" class="btn good lg block" data-action="night-heal-yes" ${canHeal?'':'disabled'} style="margin-top:32px">
         ${canHeal ? "使用解药解救 TA" : "无法使用解药"}

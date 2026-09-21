@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141C">
+<title>狼人杀小助手</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+<link rel="apple-touch-icon" href="icon-512.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="frame">
+  <button id="mod-btn">身份</button>
+  <button id="quit-btn">退出游戏</button>
+  <main id="app"></main>
+  <audio id="voice" preload="auto" playsinline></audio>
+  <div id="loading">
+    <div class="spinner"></div>
+    <div class="text" id="loading-text">正在加载运行环境 ...</div>
+  </div>
+</div>
+<!-- 主持人身份浮层：随时可打开，不打断当前流程 -->
+<div id="mod-overlay">
+  <div class="mod-panel">
+    <div class="mod-head">
+      <span>主持人视角 · 全场身份</span>
+      <button id="mod-close">关闭</button>
+    </div>
+    <div class="label muted mod-warn">仅主持人可看，请勿展示给其他玩家</div>
+    <div id="mod-list" class="mod-list"></div>
+  </div>
+</div>
+<!-- 通用确认弹窗：所有行动均需二次确认 -->
+<div id="confirm-overlay">
+  <div class="confirm-panel">
+    <div class="confirm-text" id="confirm-text">确认？</div>
+    <div class="confirm-actions">
+      <button type="button" id="confirm-cancel" class="btn line">取消</button>
+      <button type="button" id="confirm-ok" class="btn amber">确认</button>
+    </div>
+  </div>
+</div>
+<!-- Pyodide 运行时改为同源自托管，app.js 动态加载 -->
+<script src="app.js"></script>
+</body>
+</html>

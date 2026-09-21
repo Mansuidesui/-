@@ -1,0 +1,16 @@
+{
+  "name": "狼人杀小助手",
+  "short_name": "狼人杀",
+  "description": "传手机法官 - 一部手机在玩家间传递，App 充当法官",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12141C",
+  "theme_color": "#12141C",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

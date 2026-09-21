@@ -1,7 +1,7 @@
 // Service Worker - 缓存 game_logic.py + voice + pyodide 运行时 + 应用自身
 // 让狼人杀 Web 版完全离线运行、可加到 iPad/iPhone 主屏
 
-const CACHE_NAME = "werewolf-v2-6-1-20260922";
+const CACHE_NAME = "werewolf-v2-6-2-20260922";
 const APP_SHELL = [
   "./",
   "./index.html",

@@ -40,7 +40,7 @@ const ROLE_LIMITS = {
   werewolf:[1,8], villager:[0,15], seer:[0,1], witch:[0,1], guard:[0,1], hunter:[0,1], halfblood:[0,1],
 };
 const ROLE_ORDER = ["werewolf","villager","seer","witch","guard","hunter","halfblood"];
-const APP_VERSION = "V2.6";
+const APP_VERSION = "V2.8";
 
 // 本机存档/历史（localStorage）：30 分钟内可继续对局，历史保留最近 10 局
 const LS_SAVE = "wolf_save_v1";
@@ -144,11 +144,97 @@ $confirmCancel.addEventListener("click", hideConfirm);
 $confirmOverlay.addEventListener("click", (ev) => { if (ev.target === $confirmOverlay) hideConfirm(); });
 
 // ========== Pyodide 桥（同源自托管，不依赖任何第三方 CDN）==========
+// 启动可观测性：记录当前阶段与最近一次收到字节的时间，供卡死看门狗判断
+const BootStat = { stage: "准备中", lastBytesAt: Date.now(), total: 0, done: 0,
+                    fatal: null };
+let _bootStallTimer = null;
+
+function setBootStage(s) {
+  BootStat.stage = s;
+  BootStat.lastBytesAt = Date.now();
+  try { $loadingText.textContent = s; } catch (e) {}
+}
+
+function fmtMB(n) { return (n / 1048576).toFixed(1) + "MB"; }
+
+// 给 window.fetch 打补丁：pyodide 运行时大文件(wasm 9.6MB / stdlib 2.3MB)
+// 下载时实时显示字节进度，避免界面静止在"正在加载运行环境"像死机
+function installBootFetchProbe() {
+  if (window.__bootFetchPatched) return;
+  window.__bootFetchPatched = true;
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async function (input, init) {
+    let url = "";
+    try { url = typeof input === "string" ? input : (input && input.url) || ""; } catch (e) {}
+    const short = (url.split("/").pop().split("?")[0] || "runtime").slice(0, 28);
+    const isRuntime = /pyodide|game_logic\.py|\.wasm|\.zip|lock\.json/.test(url);
+    const resp = await origFetch(input, init);
+    if (!isRuntime || !resp.ok || !resp.body || !resp.body.getReader) return resp;
+    const total0 = Number(resp.headers.get("content-length")) || 0;
+    setBootStage("下载运行环境 " + short + (total0 ? "（共" + fmtMB(total0) + "）" : "") + " …");
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) { chunks.push(value); got += value.length; BootStat.lastBytesAt = Date.now(); }
+      $loadingText.textContent = "下载运行环境 " + short + "：" +
+        fmtMB(got) + (total0 ? " / " + fmtMB(total0) : "") + " …";
+    }
+    const buf = new Uint8Array(got);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    // 用读到的字节重建 Response（长度/类型与原响应一致，pyodide 无感）
+    return new Response(buf, {
+      status: resp.status, statusText: resp.statusText,
+      headers: { "Content-Type": resp.headers.get("content-type") || "application/octet-stream" }
+    });
+  };
+}
+
+// 卡死看门狗：任何文件 25 秒收不到新字节就判定网络卡死，直接报错(不再无限转圈)
+function startBootWatchdog() {
+  stopBootWatchdog();
+  _bootStallTimer = setInterval(() => {
+    const idle = Date.now() - BootStat.lastBytesAt;
+    if (idle > 25000 && !App.bootDone && !BootStat.fatal) {
+      BootStat.fatal = new Error(
+        "下载已停顿超过 25 秒（" + BootStat.stage + "）。多为网络过慢、被拦截，"
+        + "或浏览器缓存了不完整的运行环境。");
+      stopBootWatchdog();
+      showBootFailure(BootStat.fatal);
+    }
+  }, 3000);
+}
+function stopBootWatchdog() {
+  if (_bootStallTimer) { clearInterval(_bootStallTimer); _bootStallTimer = null; }
+}
+
+// 彻底自愈：注销所有 Service Worker + 清空站点缓存，再重新加载
+async function purgeAndReload() {
+  setLoadingText("正在清理损坏的缓存 …");
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch (e) {}
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+  } catch (e) {}
+  // 等 SW 真正释放控制权再刷新
+  setTimeout(() => { location.href = "./?fresh=" + Date.now(); }, 600);
+}
+// 暴露给重试按钮(onclick 内联要用全局)
+window.__purgeAndReload = purgeAndReload;
+
 function loadPyodideScript() {
   return new Promise((resolve, reject) => {
     if (window.loadPyodide) return resolve();
     const s = document.createElement("script");
-    s.src = PYODIDE_BASE + "pyodide.js";
+    s.src = PYODIDE_BASE + "pyodide.js?b=" + (window.__bootBust || "");
     s.onload = () => resolve();
     s.onerror = () => reject(new Error("运行环境脚本(pyodide.js)加载失败"));
     document.head.appendChild(s);
@@ -156,13 +242,15 @@ function loadPyodideScript() {
 }
 
 async function initPyodide() {
-  setLoadingText("正在加载运行环境（约 14MB，首次稍候）...");
+  setBootStage("正在加载运行环境（约 13MB，首次稍候）...");
   await loadPyodideScript();
+  BootStat.lastBytesAt = Date.now();
+  setBootStage("正在初始化运行环境 …");
   App.pyodide = await loadPyodide({ indexURL: PYODIDE_BASE });
   console.log("[py] pyodide loaded:", App.pyodide.runPython("import sys; sys.version"));
 
-  setLoadingText("正在加载游戏逻辑 ...");
-  const resp = await fetch("./game_logic.py");
+  setBootStage("正在加载游戏逻辑 ...");
+  const resp = await fetch("./game_logic.py?b=" + (window.__bootBust || ""));
   if (!resp.ok) throw new Error("fetch game_logic.py 失败：" + resp.status);
   const src = await resp.text();
   App.pyodide.FS.writeFile("game_logic.py", src);
@@ -171,6 +259,19 @@ import game_logic as gl
 print("[py] game_logic loaded")
 `);
   hideLoading();
+}
+
+function showBootFailure(e) {
+  App.bootDone = true;
+  stopBootWatchdog();
+  console.error(e);
+  const msg = esc((e && e.message) || String(e) || "未知错误");
+  const inWechat = /MicroMessenger|QQ\/|Weibo/i.test(navigator.userAgent);
+  $loading.innerHTML =
+    '<div class="text" style="max-width:86vw;line-height:1.6">加载失败：' + msg + '</div>' +
+    (inWechat ? '<div class="text" style="margin-top:8px;font-size:13px;color:#E8A33D">微信/QQ 内请先点右上角「···」→「在浏览器打开」</div>' : '') +
+    '<button type="button" class="btn amber lg" style="margin-top:16px" onclick="location.reload()">普通重试</button>' +
+    '<button type="button" class="btn line lg" style="margin-top:10px" onclick="__purgeAndReload()">清空缓存并重试（推荐）</button>';
 }
 
 function setLoadingText(t) { $loadingText.textContent = t; }
@@ -2021,49 +2122,34 @@ function unlockAudio() {
   try { App.ttsEnabled = localStorage.getItem(LS_TTS) === "1"; } catch (e) {}
   try { App.ttsServer = localStorage.getItem(LS_TTS_SERVER) || ""; } catch (e) {}
   try { App.ttsVoiceURI = localStorage.getItem(LS_TTS_VOICE) || ""; } catch (e) {}
+  // ?fresh= 表示刚做过"清空缓存"，给运行时 URL 加穿透标记，绕开任何残留缓存
+  try {
+    const fr = new URLSearchParams(location.search).get("fresh");
+    if (fr) window.__bootBust = fr;
+  } catch (e) {}
   // SW 尽早注册，好在加载 Pyodide 大文件时就开始建立缓存
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(e => console.warn("SW reg failed:", e));
   }
-  // 全局错误兜底：启动阶段任何报错都直接显示在加载屏上，不再永远转圈
-  const showBootError = (msg) => {
-    if (!App.bootDone) {
-      setLoadingText("加载出错：" + msg + "，请点击重试或换用系统浏览器");
-    }
-  };
-  window.addEventListener("error", ev => showBootError(ev.message || "未知错误"));
-  window.addEventListener("unhandledrejection", ev => showBootError(
-    (ev.reason && ev.reason.message) || "未知错误"));
-  // 微信内置浏览器：内核旧 + 对 14MB 运行时限速，容易卡在加载
-  if (IS_WECHAT) {
+  // 微信/QQ 内置浏览器：内核旧 + 对大文件限速，容易卡在加载
+  const inWechat = /MicroMessenger|QQ\//i.test(navigator.userAgent);
+  if (inWechat) {
     const tip = document.createElement("div");
     tip.className = "text";
     tip.style.cssText = "margin-top:14px;font-size:12px;max-width:82vw;line-height:1.6;color:#E8A33D";
-    tip.textContent = "微信加载可能较慢或失败：若超过一分钟未进入首页，请点右上角「···」选择「在浏览器打开」";
+    tip.textContent = "微信/QQ 内可能加载失败：请点右上角「···」选择「在浏览器打开」";
     $loading.appendChild(tip);
   }
-  // 30 秒仍未完成 → 显示慢速提示与重试按钮
-  setTimeout(() => {
-    if (!App.bootDone) {
-      const tip = document.createElement("div");
-      tip.className = "text";
-      tip.style.cssText = "margin-top:14px;font-size:12px;max-width:82vw;line-height:1.6;color:#E8A33D";
-      tip.textContent = "仍在加载（首次需下载约 14MB 运行环境）…若长时间无进展，建议点右上角「···」→「在浏览器打开」";
-      $loading.appendChild(tip);
-    }
-  }, 30000);
   (async () => {
+    installBootFetchProbe();
+    startBootWatchdog();
     try {
       await initPyodide();
+      stopBootWatchdog();
       App.bootDone = true;
       setScreen("setup");
     } catch (e) {
-      App.bootDone = true;
-      console.error(e);
-      $loading.innerHTML =
-        '<div class="text">加载失败：' + esc(e.message || String(e)) + '</div>' +
-        '<button type="button" class="btn amber lg" style="margin-top:16px" onclick="location.reload()">点击重试</button>' +
-        '<div class="text" style="margin-top:10px;font-size:12px;color:#8A93A6">微信内打不开时：点右上角「···」→「在浏览器打开」</div>';
+      showBootFailure(e);
     }
   })();
 })();

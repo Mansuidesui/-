@@ -266,17 +266,25 @@ function playTTSClip(name) {
 // 夜晚死因 → 完整句音频前缀
 const CAUSE_CLIP_PREFIX = { wolf: "wolf", poison: "poison", shoot: "shoot" };
 
-function announceDeathsByClips(deaths) {
+async function announceDeathsByClips(deaths) {
   _ttsClipQueue = [];
   if (!deaths || !deaths.length) {
     _ttsClipQueue.push("clip:tts_safe_night");
   } else {
     _ttsClipQueue.push("clip:tts_night");
+    // 座位号 → 昵称（用于插队合成含名字整句）
+    let nameBySeat = {};
+    try { nameBySeat = Object.fromEntries(getPlayers().map(p => [p.seat, p.name])); } catch (e) {}
     for (const [seat, cause] of deaths) {
       const prefix = CAUSE_CLIP_PREFIX[cause] || "wolf";
       const key = namedClipKey(prefix, seat);
+      let useNamed = !!TTS_NAMED.map[key];
+      if (!useNamed && useClipsAudio() && App.ttsEnabled && TTS_NAMED.server) {
+        // 后台还没合到这句：插队优先合成，最多等 25 秒，期间顶部有提示
+        useNamed = await ensureDeathClip(prefix, seat, nameBySeat[seat], 25000);
+      }
       // V2.6：优先播含名字的整句(实时合成)，没有则回退内置无名字片段
-      _ttsClipQueue.push(TTS_NAMED.map[key]
+      _ttsClipQueue.push(useNamed
         ? "dyn:" + key : "clip:tts_" + prefix + "_" + seat);
     }
   }
@@ -320,9 +328,23 @@ const CAUSE_SENTENCE = {
   poison: "遭到女巫毒杀",
   shoot: "被猎人射杀",
 };
-const TTS_NAMED = { map: {}, running: false };
+// 单一串行合成器：所有请求(后台预热 + 天亮死者插队)共用一个队列，
+// 保证同一时刻只有一个请求在飞(GPU 单 worker，并发会拖慢/报错)。
+const TTS_NAMED = {
+  map: {},        // key -> 可播放的 objectURL
+  queue: [],      // [{key,text}]，队首优先
+  known: {},      // key -> true（已入队过，避免重复）
+  waiters: {},    // key -> [resolve,...]
+  total: 0, done: 0,
+  running: false,
+  server: "",
+  ctxBox: { ctx: null },
+};
 
 function namedClipKey(cause, seat) { return cause + "_" + seat; }
+function namedClipText(cause, seat, name) {
+  return seat + "号" + (name || "") + "，" + (CAUSE_SENTENCE[cause] || CAUSE_SENTENCE.wolf);
+}
 
 function _getDynAudio(key) {
   let a = _ttsClipCache["dyn:" + key];
@@ -335,6 +357,36 @@ function _getDynAudio(key) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// 合成进度浮层（顶部细条，明确告诉用户没卡、且不影响游戏）
+function _progEl() {
+  let el = document.getElementById("tts-prog");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "tts-prog";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;" +
+      "background:rgba(20,22,30,.94);color:#FFC24B;font-size:12px;line-height:1.4;" +
+      "padding:7px 12px;border-bottom:1px solid #3A3F4D;text-align:center;" +
+      "font-family:inherit;box-shadow:0 2px 10px rgba(0,0,0,.4)";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function _hideProgSoon() {
+  setTimeout(() => {
+    const el = document.getElementById("tts-prog");
+    if (el && TTS_NAMED.queue.length === 0) el.remove();
+  }, 1200);
+}
+function _renderProg(extra) {
+  const t = TTS_NAMED;
+  if (!t.total) return;
+  const el = _progEl();
+  const pct = Math.min(100, Math.round(t.done * 100 / t.total));
+  el.innerHTML = "克隆语音准备中 " + t.done + "/" + t.total + "（" + pct + "%）" +
+    (extra ? " · " + extra : "") +
+    "<br><span style='color:#9aa0ad'>后台进行，不影响发牌和游戏，可直接开始</span>";
+}
 
 // 合成结果哑火校验：解码后测音量，异常时放行交给播放兜底
 async function _namedClipAudible(buf, ctxBox) {
@@ -353,50 +405,109 @@ async function _namedClipAudible(buf, ctxBox) {
   }
 }
 
-async function _synthNamedClip(server, text, key, ctxBox) {
+// 真正发一次合成请求（失败换 seed 重试），成功写入 map，返回 bool
+async function _fetchNamedClip(server, text, key) {
   for (const seed of [101, 202, 303]) {
     const qs = new URLSearchParams({
       text, text_lang: "zh", media_type: "wav",
       text_split_method: "cut0", seed: String(seed),
+      ref_audio_path: "D:\\GPT-SoVITS\\xjx10s.mp3",
+      prompt_text: "以前遇到棘手的案子，是因为线索太少。比如残缺的指纹与鞋印，模糊不清的监控等等",
+      prompt_lang: "zh",
     }).toString();
     try {
       const r = await fetch(server + "/tts?" + qs, { cache: "no-store" });
       if (!r.ok) throw new Error(String(r.status));
       const buf = await r.arrayBuffer();
       if (buf.byteLength < 5000) throw new Error("tiny");
-      if (await _namedClipAudible(buf, ctxBox)) {
-        TTS_NAMED.map[key] = URL.createObjectURL(
-          new Blob([buf], { type: "audio/wav" }));
+      if (await _namedClipAudible(buf, TTS_NAMED.ctxBox)) {
+        // 同一 key 旧的 Audio 对象要清掉，让播放器拿到新 URL
+        delete _ttsClipCache["dyn:" + key];
+        TTS_NAMED.map[key] = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
         return true;
       }
     } catch (e) { /* mixed content 拦截/超时/哑火 → 换 seed 重试 */ }
-    await sleep(400);
+    await sleep(300);
   }
   return false;
 }
 
+function _notifyDone(key) {
+  const ws = TTS_NAMED.waiters[key];
+  if (ws) { ws.forEach(fn => fn(!!TTS_NAMED.map[key])); delete TTS_NAMED.waiters[key]; }
+}
+
+// 把一句排进队列；front=true 插队（天亮死者用）。返回该句完成 Promise
+function _enqueue(key, text, front) {
+  if (TTS_NAMED.map[key]) return Promise.resolve(true);
+  if (!TTS_NAMED.known[key]) {
+    TTS_NAMED.known[key] = true;
+    const item = { key, text };
+    if (front) TTS_NAMED.queue.unshift(item);
+    else TTS_NAMED.queue.push(item);
+    TTS_NAMED.total++;
+  } else if (front) {
+    // 已在后台队列里但还没轮到：提到队首（跳过正在合成的那句）
+    const i = TTS_NAMED.queue.findIndex(q => q.key === key);
+    if (i > 0) TTS_NAMED.queue.unshift(TTS_NAMED.queue.splice(i, 1)[0]);
+  }
+  _runWorker();
+  return new Promise(resolve => {
+    (TTS_NAMED.waiters[key] = TTS_NAMED.waiters[key] || []).push(resolve);
+  });
+}
+
+// 唯一的串行合成循环
+async function _runWorker() {
+  if (TTS_NAMED.running) return;
+  TTS_NAMED.running = true;
+  try {
+    while (TTS_NAMED.queue.length) {
+      const { key, text } = TTS_NAMED.queue.shift();
+      if (!TTS_NAMED.map[key]) {
+        await _fetchNamedClip(TTS_NAMED.server, text, key);
+      }
+      TTS_NAMED.done++;
+      _notifyDone(key);
+      _renderProg();
+      await sleep(200);
+    }
+    _hideProgSoon();
+  } finally {
+    TTS_NAMED.running = false;
+  }
+}
+
 async function ensureNamedClips() {
   // 安卓浏览器 + 朗读开 + 配了服务器才合成；页面刷新后重新合成
-  if (!useClipsAudio() || !App.ttsEnabled || TTS_NAMED.running) return;
+  if (!useClipsAudio() || !App.ttsEnabled) return;
   const server = (App.ttsServer || "").replace(/\/+$/, "");
   if (!server || !/^https?:\/\//i.test(server)) return;
   const players = getPlayers();
   if (!players || !players.length) return;
-  TTS_NAMED.running = true;
-  const ctxBox = { ctx: null };
-  try {
-    for (const p of players) {
-      for (const cause of Object.keys(CAUSE_SENTENCE)) {
-        const key = namedClipKey(cause, p.seat);
-        if (TTS_NAMED.map[key]) continue;
-        const text = p.seat + "号" + p.name + "，" + CAUSE_SENTENCE[cause];
-        await _synthNamedClip(server, text, key, ctxBox);
-        await sleep(1000);  // 给 API 留喘息
-      }
+  TTS_NAMED.server = server;
+  // 后台预热：每个玩家 × 三种死因全部排到队尾（不阻塞游戏）
+  for (const p of players) {
+    for (const cause of Object.keys(CAUSE_SENTENCE)) {
+      const key = namedClipKey(cause, p.seat);
+      _enqueue(key, namedClipText(cause, p.seat, p.name), false);
     }
-  } finally {
-    TTS_NAMED.running = false;
   }
+  _renderProg();
+}
+
+// 天亮播报前调用：确保死者句子就绪（插队优先），限时等待；超时返回 false 走无名字兜底
+async function ensureDeathClip(cause, seat, name, timeoutMs) {
+  const key = namedClipKey(cause, seat);
+  if (TTS_NAMED.map[key]) return true;
+  if (!TTS_NAMED.server) return false;
+  let timer = null;
+  const timeout = new Promise(res => { timer = setTimeout(() => res(false), timeoutMs); });
+  const done = _enqueue(key, namedClipText(cause, seat, name), true);
+  _renderProg("正在优先准备 " + seat + "号 语音…");
+  const ok = await Promise.race([done, timeout]);
+  clearTimeout(timer);
+  return ok === true;
 }
 // 中文音色缓存（Safari 的 getVoices 初始为空，voiceschanged 后才有）
 function refreshVoices() {

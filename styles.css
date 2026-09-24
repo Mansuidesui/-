@@ -146,6 +146,13 @@ hr.sep {
 .target-cell:disabled { color: var(--muted); cursor: not-allowed; }
 .target-cell:disabled .seat { color: var(--muted); }
 .target-cell.wolf-mate { border-color: var(--wolf-red); }
+/* V2.9：已被狼人袭击(女巫毒药阶段禁选) */
+.target-cell.assaulted { border-color: var(--wolf-red); background: rgba(217,75,75,.10); }
+.target-cell .assault-tag {
+  display:block; margin-top: 6px; font-size: 11px; font-weight: 600;
+  color: var(--wolf-red); padding: 2px 6px;
+  border: 1px solid var(--wolf-red); border-radius: 4px;
+}
 
 /* ---------- 设置屏：身份计数器 ---------- */
 .role-row {

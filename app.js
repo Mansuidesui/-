@@ -40,7 +40,7 @@ const ROLE_LIMITS = {
   werewolf:[1,8], villager:[0,15], seer:[0,1], witch:[0,1], guard:[0,1], hunter:[0,1], halfblood:[0,1],
 };
 const ROLE_ORDER = ["werewolf","villager","seer","witch","guard","hunter","halfblood"];
-const APP_VERSION = "V2.8";
+const APP_VERSION = "V2.9";
 
 // 本机存档/历史（localStorage）：30 分钟内可继续对局，历史保留最近 10 局
 const LS_SAVE = "wolf_save_v1";

@@ -423,12 +423,19 @@ class NightFlow(object):
                 else:
                     s.log.append("第%d夜 狼人空刀" % s.day)
             elif key == "poison":
-                s.night.witch_poison_target = value
-                if value is not None:
-                    s.log.append("第%d夜 女巫毒杀了 %s"
-                                 % (s.day, s.player(value).name))
+                # V2.9：女巫不能毒今晚已被狼人袭击的目标，避免同夜重复击杀。
+                # UI 层已禁用该格并标注「已被袭击」，这里是逻辑兜底。
+                if value is not None and value == s.night.wolf_target:
+                    s.night.witch_poison_target = None
+                    s.log.append("第%d夜 女巫未使用毒药(目标已被狼人袭击)"
+                                 % s.day)
                 else:
-                    s.log.append("第%d夜 女巫未使用毒药" % s.day)
+                    s.night.witch_poison_target = value
+                    if value is not None:
+                        s.log.append("第%d夜 女巫毒杀了 %s"
+                                     % (s.day, s.player(value).name))
+                    else:
+                        s.log.append("第%d夜 女巫未使用毒药" % s.day)
             elif key == "seer":
                 target = s.player(value)
                 s.night.seer_target = value
@@ -575,7 +582,7 @@ def death_announcement_text(state):
         return "昨夜是平安夜，没有人死亡。"
 
     tts_cause = {
-        CAUSE_WOLF: "遭到狼人强奸",
+        CAUSE_WOLF: "遭到狼人袭击",
         CAUSE_POISON: "遭到女巫毒杀",
         CAUSE_SHOOT: "被猎人射杀",
         CAUSE_MANUAL: "遭到系统踢出",

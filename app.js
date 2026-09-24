@@ -425,7 +425,7 @@ function _playNextClip() {
 
 // ========== V2.6：名字整句实时合成(局域网 GPT-SoVITS，仅安卓浏览器) ==========
 const CAUSE_SENTENCE = {
-  wolf: "遭到狼人强奸",
+  wolf: "遭到狼人袭击",
   poison: "遭到女巫毒杀",
   shoot: "被猎人射杀",
 };
@@ -708,14 +708,17 @@ function getAlivePlayers() {
 }
 
 // 通用：渲染一个目标网格（点格=选中高亮，再点底部确认按钮提交，防误触）
-function renderTargetGrid(choices, chooseAction, disabledSet = new Set(), wolfMates = new Set(), selectedSeat = null) {
+function renderTargetGrid(choices, chooseAction, disabledSet = new Set(), wolfMates = new Set(), selectedSeat = null, assaultedSet = new Set()) {
   const cells = choices.map(p => {
-    const dis = disabledSet.has(p.seat) ? "disabled" : "";
+    const assaulted = assaultedSet.has(p.seat);
+    const dis = (disabledSet.has(p.seat) || assaulted) ? "disabled" : "";
     const mate = wolfMates.has(p.seat) ? "wolf-mate" : "";
     const sel = (p.seat === selectedSeat) ? "selected" : "";
-    return `<button type="button" class="target-cell ${mate} ${sel}" data-action="${chooseAction}" data-seat="${p.seat}" ${dis}>
+    const assaultTag = assaulted ? `<span class="assault-tag">已被袭击</span>` : "";
+    return `<button type="button" class="target-cell ${mate} ${sel} ${assaulted?'assaulted':''}" data-action="${chooseAction}" data-seat="${p.seat}" ${dis}>
       <span class="seat">${p.seat}号</span>
       <span class="name">${esc(p.name)}</span>
+      ${assaultTag}
     </button>`;
   }).join("");
   return `<div class="target-grid">${cells}</div>`;
@@ -1391,6 +1394,7 @@ function renderSelect(stage) {
   let choices = alive;
   const disabled = new Set();
   const wolfMates = new Set();
+  const assaulted = new Set();
   if (key === "guard") {
     if (isActive) {
       const last = App.pyodide.runPython("state.last_guard_target");
@@ -1405,11 +1409,22 @@ function renderSelect(stage) {
     choices = alive.filter(p => p.seat !== hbSeat);
   } else if (key === "wolf") {
     alive.forEach(p => { if (p.role === "werewolf") wolfMates.add(p.seat); });
+  } else if (key === "poison") {
+    // V2.9：女巫毒药阶段不能再毒今晚已被狼人袭击的玩家，
+    // 在格子上标注「已被袭击」并禁用，避免同一晚被狼刀+毒杀重复击杀。
+    const wt = App.pyodide.runPython("state.night.wolf_target");
+    if (wt !== undefined && wt !== null && wt !== undefined) {
+      const seat = Number(wt);
+      if (!Number.isNaN(seat)) assaulted.add(seat);
+    }
   }
   let extraInfo = "";
   if (role === "werewolf") {
     const wolfNames = alive.filter(p=>p.role==="werewolf").map(p=>`${p.seat}号${esc(p.name)}`).join("、");
     extraInfo = `<div class="label wolf" style="margin:8px 0">今晚在场狼人：${wolfNames}</div>`;
+  }
+  if (key === "poison" && assaulted.size > 0) {
+    extraInfo += `<div class="label muted" style="margin:8px 0">已被袭击的玩家不能被毒杀</div>`;
   }
   // 出局/无药提示横幅：
   // 女巫特殊处理——只有已出局 或 解药毒药都用完才显示横幅；
@@ -1433,7 +1448,7 @@ function renderSelect(stage) {
       ${extraInfo}
       ${inactiveNote}
       <div class="label muted" style="margin-top:4px">先点选目标，确认无误后再点底部「确认选择」</div>
-      <div class="scroll-area">${renderTargetGrid(choices, "night-choose", disabled, wolfMates, picked ? picked.seat : null)}</div>
+      <div class="scroll-area">${renderTargetGrid(choices, "night-choose", disabled, wolfMates, picked ? picked.seat : null, assaulted)}</div>
       ${picked ? renderConfirmBar("night-confirm", picked.seat, picked.name) : ""}
       ${skipLabel ? `<button type="button" class="btn line sm block" data-action="night-skip" style="margin-top:8px">${esc(skipLabel)}</button>` : ""}
     </div>
@@ -1476,7 +1491,7 @@ function renderWitchHeal(stage) {
   } else {
     const p = getPlayers().find(x=>x.seat===target);
     body = `
-      <div class="label big bold">今晚 ${target}号 ${esc(p.name)} 被狼人强奸</div>
+      <div class="label big bold">今晚 ${target}号 ${esc(p.name)} 被狼人袭击</div>
       ${reason && healAvail ? `<div class="label wolf">${esc(reason)}</div>` : ""}
       <button type="button" class="btn good lg block" data-action="night-heal-yes" ${canHeal?'':'disabled'} style="margin-top:32px">
         ${canHeal ? "使用解药解救 TA" : "无法使用解药"}
